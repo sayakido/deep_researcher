@@ -145,15 +145,18 @@ foreach task in parallel:
     ├── prepare_research_context(result)
     │    └─ 去重 + 格式化 + 可选全文抓取
     │
-    └── SummarizationService.summarize_task(state, task, context)
-         ├─ ToolRunner.run()  → 同步完整总结
-         │     └─ LLM 自动调用 create_note / update_note 持久化任务笔记
-         │
-         └─ ToolRunner.stream() → 流式 chunk 输出（run_stream 模式）
+    └── SummarizationService.stream_task_summary(state, task, context)
+         └─ ToolRunner.stream() → 流式 chunk 输出
+               └─ LLM 自动调用 create_note / update_note 持久化任务笔记
+               └─ StreamWriter 逐 chunk 写入 → SSE `task_summary_chunk`
 ```
 
-**同步模式（`run`）**：LangGraph `invoke()` 自动编排全图
-**流式模式（`run_stream`）**：手工编排，每步 yield SSE 事件
+两种模式共享同一张 LangGraph 图，无重复逻辑：
+
+| 模式 | 调用方式 | SSE 事件来源 |
+|------|----------|-------------|
+| `run()` | `graph.invoke()` | 无（StreamWriter 为空操作） |
+| `run_stream()` | `graph.stream(stream_mode="custom")` | 各节点通过 `StreamWriter` 写入 → `CustomStreamPart.data` |
 
 ### 3. 报告阶段 — `generate_report`
 
