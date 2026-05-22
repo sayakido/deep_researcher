@@ -8,7 +8,7 @@ from typing import Any, Iterator
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.types import Send
+from langgraph.types import Send, StreamWriter
 
 from config import Configuration
 from models import LangGraphState, SummaryState, SummaryStateOutput, TodoItem
@@ -105,10 +105,17 @@ class DeepResearchAgent:
 
         return builder.compile()
 
-    def _plan_tasks_node(self, state: LangGraphState) -> dict:
+    def _plan_tasks_node(self, state: LangGraphState, writer: StreamWriter = lambda _: None) -> dict:
         todo_items = self.planner.plan_todo_list(state["research_topic"])
         if not todo_items:
             todo_items = [self.planner.create_fallback_task(state["research_topic"])]
+
+        writer({
+            "type": "todo_list",
+            "tasks": [self._serialize_task(t) for t in todo_items],
+            "step": 0,
+        })
+
         return {"todo_items": todo_items}
 
     def _route_tasks(self, state: LangGraphState) -> list[Send] | str:
@@ -128,14 +135,101 @@ class DeepResearchAgent:
             for task in pending
         ]
 
-    def _execute_one_task(self, state: LangGraphState) -> dict:
-        """Execute research for a single task (used by parallel Send API)."""
+    def _execute_one_task(self, state: LangGraphState, writer: StreamWriter = lambda _: None) -> dict:
+        """Execute research for a single task, emitting SSE events via StreamWriter."""
         task = state["todo_items"][0] if state["todo_items"] else None
         if not task or task.status in ("completed", "skipped"):
             return {}
 
         summary_state = _graph_state_to_summary(state)
-        self._execute_single_task(summary_state, task)
+        task.status = "in_progress"
+
+        writer({
+            "type": "task_status",
+            "task_id": task.id,
+            "status": "in_progress",
+            "title": task.title,
+            "intent": task.intent,
+            "note_id": task.note_id,
+            "note_path": task.note_path,
+        })
+
+        search_result, notices, answer_text, backend = dispatch_search(
+            task.query,
+            self.config,
+        )
+
+        if notices:
+            for notice in notices:
+                if notice:
+                    writer({"type": "status", "message": notice, "task_id": task.id})
+
+        if not search_result or not search_result.get("results"):
+            task.status = "skipped"
+            task.notices = notices
+            writer({
+                "type": "task_status",
+                "task_id": task.id,
+                "status": "skipped",
+                "title": task.title,
+                "intent": task.intent,
+                "note_id": task.note_id,
+                "note_path": task.note_path,
+            })
+            return {
+                "todo_items": [task],
+                "web_research_results": [],
+                "sources_gathered": [],
+                "research_loop_count": 0,
+            }
+
+        sources_summary, context = prepare_research_context(
+            search_result, answer_text, self.config,
+        )
+        task.sources_summary = sources_summary
+        summary_state.web_research_results.append(context)
+        summary_state.sources_gathered.append(sources_summary)
+        summary_state.research_loop_count += 1
+
+        writer({
+            "type": "sources",
+            "task_id": task.id,
+            "latest_sources": sources_summary,
+            "raw_context": context,
+            "backend": backend,
+            "note_id": task.note_id,
+            "note_path": task.note_path,
+        })
+
+        summary_text: str | None = None
+        summary_stream, summary_getter = self.summarizer.stream_task_summary(
+            summary_state, task, context,
+        )
+
+        try:
+            for chunk in summary_stream:
+                if chunk:
+                    writer({
+                        "type": "task_summary_chunk",
+                        "task_id": task.id,
+                        "content": chunk,
+                        "note_id": task.note_id,
+                    })
+        finally:
+            summary_text = summary_getter()
+
+        task.summary = summary_text.strip() if summary_text else "暂无可用信息"
+        task.status = "completed"
+
+        writer({
+            "type": "task_status",
+            "task_id": task.id,
+            "status": "completed",
+            "summary": task.summary,
+            "sources_summary": task.sources_summary,
+            "note_id": task.note_id,
+            "note_path": task.note_path,
+        })
 
         return {
             "todo_items": [task],
@@ -144,12 +238,20 @@ class DeepResearchAgent:
             "research_loop_count": 1,
         }
 
-    def _generate_report_node(self, state: LangGraphState) -> dict:
+    def _generate_report_node(self, state: LangGraphState, writer: StreamWriter = lambda _: None) -> dict:
         summary_state = _graph_state_to_summary(state)
         summary_state.todo_items = state["todo_items"]
 
         report = self.reporting.generate_report(summary_state)
         self._persist_final_report(summary_state, report)
+
+        writer({
+            "type": "final_report",
+            "report": report,
+            "note_id": summary_state.report_note_id,
+            "note_path": summary_state.report_note_path,
+        })
+        writer({"type": "done"})
 
         return {
             "structured_report": report,
@@ -187,157 +289,36 @@ class DeepResearchAgent:
         )
 
     def run_stream(self, topic: str) -> Iterator[dict[str, Any]]:
-        """Execute the workflow yielding incremental progress events."""
+        """Execute the workflow yielding incremental progress events.
+
+        Uses LangGraph's stream_mode='custom' so all SSE events are
+        emitted by the graph nodes via StreamWriter.  Tasks run in
+        parallel through the Send API with zero duplicated logic.
+        """
         logger.debug("Starting streaming research: topic=%s", topic)
         yield {"type": "status", "message": "初始化研究流程"}
 
-        # ---- 1. Plan tasks ----
-        todo_items = self.planner.plan_todo_list(topic)
-        if not todo_items:
-            todo_items = [self.planner.create_fallback_task(topic)]
-
-        yield {
-            "type": "todo_list",
-            "tasks": [self._serialize_task(t) for t in todo_items],
-            "step": 0,
+        initial_state: LangGraphState = {
+            "research_topic": topic,
+            "todo_items": [],
+            "web_research_results": [],
+            "sources_gathered": [],
+            "research_loop_count": 0,
+            "running_summary": "",
+            "structured_report": None,
+            "report_note_id": None,
+            "report_note_path": None,
         }
 
-        # ---- 2. Execute tasks ----
-        summary_state = SummaryState(
-            research_topic=topic,
-            todo_items=todo_items,
-        )
-
-        for task in summary_state.todo_items:
-            if task.status in ("completed", "skipped"):
-                continue
-
-            yield {
-                "type": "task_status",
-                "task_id": task.id,
-                "status": "in_progress",
-                "title": task.title,
-                "intent": task.intent,
-                "note_id": task.note_id,
-                "note_path": task.note_path,
-            }
-
-            search_result, notices, answer_text, backend = dispatch_search(
-                task.query,
-                self.config,
-            )
-
-            if notices:
-                for notice in notices:
-                    if notice:
-                        yield {
-                            "type": "status",
-                            "message": notice,
-                            "task_id": task.id,
-                        }
-
-            if not search_result or not search_result.get("results"):
-                task.status = "skipped"
-                yield {
-                    "type": "task_status",
-                    "task_id": task.id,
-                    "status": "skipped",
-                    "title": task.title,
-                    "intent": task.intent,
-                    "note_id": task.note_id,
-                    "note_path": task.note_path,
-                }
-                continue
-
-            sources_summary, context = prepare_research_context(
-                search_result, answer_text, self.config,
-            )
-            task.sources_summary = sources_summary
-            summary_state.web_research_results.append(context)
-            summary_state.sources_gathered.append(sources_summary)
-            summary_state.research_loop_count += 1
-
-            yield {
-                "type": "sources",
-                "task_id": task.id,
-                "latest_sources": sources_summary,
-                "raw_context": context,
-                "backend": backend,
-                "note_id": task.note_id,
-                "note_path": task.note_path,
-            }
-
-            summary_text: str | None = None
-            summary_stream, summary_getter = self.summarizer.stream_task_summary(
-                summary_state, task, context,
-            )
-
-            try:
-                for chunk in summary_stream:
-                    if chunk:
-                        yield {
-                            "type": "task_summary_chunk",
-                            "task_id": task.id,
-                            "content": chunk,
-                            "note_id": task.note_id,
-                        }
-            finally:
-                summary_text = summary_getter()
-
-            task.summary = summary_text.strip() if summary_text else "暂无可用信息"
-            task.status = "completed"
-
-            yield {
-                "type": "task_status",
-                "task_id": task.id,
-                "status": "completed",
-                "summary": task.summary,
-                "sources_summary": task.sources_summary,
-                "note_id": task.note_id,
-                "note_path": task.note_path,
-            }
-
-        # ---- 3. Generate report ----
-        report = self.reporting.generate_report(summary_state)
-        self._persist_final_report(summary_state, report)
-
-        yield {
-            "type": "final_report",
-            "report": report,
-            "note_id": summary_state.report_note_id,
-            "note_path": summary_state.report_note_path,
-        }
-        yield {"type": "done"}
+        for event in self.graph.stream(initial_state, stream_mode="custom"):
+            if isinstance(event, dict) and event.get("type") == "custom":
+                data = event.get("data")
+                if isinstance(data, dict) and data.get("type"):
+                    yield data
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-    def _execute_single_task(self, summary_state: SummaryState, task: TodoItem) -> None:
-        """Run search + summarization for a single task."""
-        task.status = "in_progress"
-
-        search_result, notices, answer_text, _ = dispatch_search(
-            task.query,
-            self.config,
-        )
-
-        if not search_result or not search_result.get("results"):
-            task.status = "skipped"
-            task.notices = notices
-            return
-
-        sources_summary, context = prepare_research_context(
-            search_result, answer_text, self.config,
-        )
-        task.sources_summary = sources_summary
-        summary_state.web_research_results.append(context)
-        summary_state.sources_gathered.append(sources_summary)
-        summary_state.research_loop_count += 1
-
-        summary_text = self.summarizer.summarize_task(summary_state, task, context)
-        task.summary = summary_text.strip() if summary_text else "暂无可用信息"
-        task.status = "completed"
-
     def _serialize_task(self, task: TodoItem) -> dict[str, Any]:
         return {
             "id": task.id,
