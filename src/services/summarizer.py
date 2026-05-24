@@ -117,16 +117,16 @@ class SummarizationService:
             )
         else:
             note_hint = (
-                "\n可使用 create_note 工具创建任务笔记来记录调研结果，"
-                "标签需包含 deep_research 和 task_{task.id}。"
+                "\n可使用 create_note 工具创建任务笔记来记录硬件方案分析结果，"
+                "标签需包含 hardware_design 和 task_{task.id}。"
             )
 
         return (
-            f"任务主题：{state.research_topic}\n"
+            f"产品需求：{state.research_topic}\n"
             f"任务名称：{task.title}\n"
             f"任务目标：{task.intent}\n"
             f"检索查询：{task.query}\n"
             f"任务上下文：\n{context}\n"
             f"{note_hint}\n"
-            "请基于以上上下文，生成一份面向用户的 Markdown 总结。"
+            "请基于以上上下文，生成一份面向硬件方案评审的 Markdown 分析总结。"
         )

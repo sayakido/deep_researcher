@@ -296,7 +296,7 @@ class DeepResearchAgent:
         parallel through the Send API with zero duplicated logic.
         """
         logger.debug("Starting streaming research: topic=%s", topic)
-        yield {"type": "status", "message": "初始化研究流程"}
+        yield {"type": "status", "message": "初始化硬件方案设计流程"}
 
         initial_state: LangGraphState = {
             "research_topic": topic,
@@ -337,7 +337,7 @@ class DeepResearchAgent:
         if not self.note_store or not report or not report.strip():
             return
 
-        note_title = f"研究报告：{summary_state.research_topic}".strip() or "研究报告"
+        note_title = f"硬件方案设计报告：{summary_state.research_topic}".strip() or "硬件方案设计报告"
         content = report.strip()
 
         note_id = summary_state.report_note_id
@@ -346,14 +346,14 @@ class DeepResearchAgent:
                 note_id=note_id,
                 title=note_title,
                 note_type="conclusion",
-                tags=["deep_research", "report"],
+                tags=["hardware_design", "report"],
                 content=content,
             )
         else:
             note_id = self.note_store.create(
                 title=note_title,
                 note_type="conclusion",
-                tags=["deep_research", "report"],
+                tags=["hardware_design", "report"],
                 content=content,
             )
             summary_state.report_note_id = note_id

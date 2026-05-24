@@ -83,12 +83,12 @@ def create_note_tools(note_store: NoteStore) -> list:
 
     @tool
     def create_note(title: str, note_type: str, tags: list[str], content: str) -> str:
-        """创建一个新笔记来存储任务信息。调用此工具记录调研任务的进度、发现和总结。
+        """创建一个新笔记来存储任务信息。调用此工具记录硬件方案设计任务的进度、发现和总结。
         
         Args:
             title: 笔记标题，应包含任务编号和名称
             note_type: 笔记类型，通常是 "task_state" 或 "conclusion"
-            tags: 标签列表，必须包含 "deep_research" 和 "task_{task_id}"
+            tags: 标签列表，硬件方案任务应包含 "hardware_design" 和 "task_{task_id}"
             content: 笔记正文内容
         """
         note_id = note_store.create(title=title, note_type=note_type, tags=tags, content=content)
@@ -96,7 +96,7 @@ def create_note_tools(note_store: NoteStore) -> list:
 
     @tool
     def update_note(note_id: str, content: str) -> str:
-        """更新已有笔记的内容。在获得新的调研结果后，调用此工具追加信息到已有笔记中。
+        """更新已有笔记的内容。在获得新的硬件方案分析结果后，调用此工具追加信息到已有笔记中。
         
         Args:
             note_id: 要更新的笔记 ID
@@ -108,7 +108,7 @@ def create_note_tools(note_store: NoteStore) -> list:
 
     @tool
     def read_note(note_id: str) -> str:
-        """读取已有笔记的全部内容。在开始任务总结前，先调用此工具获取先前记录的上下文。
+        """读取已有笔记的全部内容。在开始任务总结前，先调用此工具获取先前记录的方案上下文。
         
         Args:
             note_id: 要读取的笔记 ID

@@ -44,11 +44,11 @@ class ReportingService:
         notes_section = "\n".join(note_references) if note_references else "- 暂无可用任务笔记"
 
         prompt = (
-            f"研究主题：{state.research_topic}\n"
-            f"任务概览：\n{''.join(tasks_block)}\n"
+            f"产品需求：{state.research_topic}\n"
+            f"硬件方案设计任务概览：\n{''.join(tasks_block)}\n"
             f"可用任务笔记：\n{notes_section}\n"
-            "请整合所有信息后撰写一份结构化研究报告。"
-            "完成后可使用 create_note 工具（type=conclusion, tags=deep_research,report）保存报告要点。"
+            "请整合所有信息后撰写一份结构化硬件方案设计报告。"
+            "完成后可使用 create_note 工具（type=conclusion, tags=hardware_design,report）保存报告要点。"
         )
 
         messages = [
@@ -62,4 +62,4 @@ class ReportingService:
         if self._config.strip_thinking_tokens:
             report_text = strip_thinking_tokens(report_text)
 
-        return report_text or "报告生成失败，请检查输入。"
+        return report_text or "硬件方案设计报告生成失败，请检查输入。"

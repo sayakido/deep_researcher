@@ -38,10 +38,8 @@ class TestNoteStore:
         assert path.endswith(f"{note_id}.md")
         assert Path(path).parent.exists()
 
-    def test_workspace_created(self):
-        tmp = Path("/tmp/test_notes_workspace")
+    def test_workspace_created(self, tmp_path: Path):
+        tmp = tmp_path / "test_notes_workspace"
         store = NoteStore(workspace=str(tmp))
         assert tmp.exists()
-        # cleanup
-        import shutil
-        shutil.rmtree(tmp)
+        assert store.workspace == tmp

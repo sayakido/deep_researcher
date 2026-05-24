@@ -152,3 +152,5 @@ class TestPlanTasksNode:
         result = agent._plan_tasks_node(state)
         assert len(result["todo_items"]) == 1  # fallback task
         assert result["todo_items"][0].id == 1
+        assert result["todo_items"][0].title == "需求与架构初设"
+        assert "hardware architecture" in result["todo_items"][0].query

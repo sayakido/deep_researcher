@@ -67,9 +67,13 @@ class PlanningService:
         """Create a minimal fallback task when planning failed."""
         return TodoItem(
             id=1,
-            title="基础背景梳理",
-            intent="收集主题的核心背景与最新动态",
-            query=f"{topic} 最新进展" if topic else "基础背景梳理",
+            title="需求与架构初设",
+            intent="梳理产品需求、关键约束和初步系统架构，为后续核心器件选型建立边界条件。",
+            query=(
+                f"{topic} hardware architecture component selection reference design"
+                if topic
+                else "hardware architecture component selection reference design"
+            ),
         )
 
     # ------------------------------------------------------------------
