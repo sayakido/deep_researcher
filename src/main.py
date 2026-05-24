@@ -23,7 +23,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from agent import DeepResearchAgent, _create_llm
-from config import Configuration, SearchAPI
+from config import Configuration, SearchAPI, resolve_project_path
 from services.logging_utils import (
     RequestIdFilter,
     get_request_id,
@@ -76,20 +76,31 @@ logger.add(
 
 log_file = os.getenv("LOG_FILE", "logs/app.log").strip()
 if log_file:
-    log_path = Path(log_file)
+    log_path = Path(resolve_project_path(log_file))
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    logger.add(
-        log_path,
-        level=os.getenv("LOG_LEVEL", "INFO"),
-        format=LOG_FORMAT,
-        rotation=os.getenv("LOG_ROTATION", "20 MB"),
-        retention=os.getenv("LOG_RETENTION", "7 days"),
-        encoding="utf-8",
-        enqueue=True,
-        backtrace=True,
-        diagnose=False,
-        filter=lambda record: record["extra"].update({"request_id": record["extra"].get("request_id", get_request_id())}) or True,
-    )
+
+    log_sink_options = {
+        "level": os.getenv("LOG_LEVEL", "INFO"),
+        "format": LOG_FORMAT,
+        "rotation": os.getenv("LOG_ROTATION", "20 MB"),
+        "retention": os.getenv("LOG_RETENTION", "7 days"),
+        "encoding": "utf-8",
+        "enqueue": True,
+        "backtrace": True,
+        "diagnose": False,
+        "filter": lambda record: record["extra"].update(
+            {"request_id": record["extra"].get("request_id", get_request_id())}
+        ) or True,
+    }
+    try:
+        logger.add(log_path, **log_sink_options)
+    except PermissionError:
+        fallback_path = log_path.with_name(f"{log_path.stem}.{os.getpid()}{log_path.suffix}")
+        try:
+            logger.add(fallback_path, **log_sink_options)
+            logger.warning("log file locked; using fallback log file {}", fallback_path)
+        except PermissionError as exc:
+            logger.warning("file logging disabled: cannot write {} ({})", log_path, exc)
 _configure_logging()
 
 

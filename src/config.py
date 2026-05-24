@@ -1,11 +1,22 @@
 import os
 from enum import Enum
+from pathlib import Path
 from typing import Any, Optional
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 load_dotenv()
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def resolve_project_path(value: str) -> str:
+    """Resolve relative runtime paths from the project root, not the process cwd."""
+    path = Path(value).expanduser()
+    if path.is_absolute():
+        return str(path)
+    return str(PROJECT_ROOT / path)
 
 
 class SearchAPI(Enum):
@@ -40,7 +51,7 @@ class Configuration(BaseModel):
         description="Whether to store task progress as notes",
     )
     notes_workspace: str = Field(
-        default="./notes",
+        default="runtime/notes/dev",
         title="Notes Workspace",
         description="Directory for NoteStore to persist task notes",
     )
@@ -100,6 +111,9 @@ class Configuration(BaseModel):
         description="Base URL for SearXNG instance",
     )
 
+    def model_post_init(self, __context: Any) -> None:
+        self.notes_workspace = resolve_project_path(self.notes_workspace)
+
     @classmethod
     def from_env(cls, overrides: Optional[dict[str, Any]] = None) -> "Configuration":
         """Create a configuration object using environment variables and overrides."""
@@ -153,4 +167,3 @@ class Configuration(BaseModel):
     def resolved_model(self) -> str | None:
         """Best-effort resolution of the model identifier to use."""
         return self.llm_model_id or self.local_llm
-

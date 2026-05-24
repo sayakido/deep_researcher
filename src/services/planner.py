@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, List
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -94,7 +95,7 @@ class PlanningService:
         tasks: List[dict[str, Any]] = []
 
         if isinstance(json_payload, dict):
-            candidate = json_payload.get("tasks")
+            candidate = self._find_task_list(json_payload)
             if isinstance(candidate, list):
                 for item in candidate:
                     if isinstance(item, dict):
@@ -103,6 +104,62 @@ class PlanningService:
             for item in json_payload:
                 if isinstance(item, dict):
                     tasks.append(item)
+
+        if tasks:
+            return tasks
+
+        markdown_tasks = self._extract_markdown_table_tasks(text)
+        if markdown_tasks:
+            logger.info("Planner parsed %d tasks from markdown table fallback", len(markdown_tasks))
+            return markdown_tasks
+
+        return tasks
+
+    def _find_task_list(self, payload: dict[str, Any]) -> list | None:
+        """Find a task list in common LLM response shapes."""
+        for key in ("tasks", "todo_items", "todoItems", "items", "task_list", "taskList"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return value
+
+        for value in payload.values():
+            if isinstance(value, dict):
+                found = self._find_task_list(value)
+                if found is not None:
+                    return found
+            elif isinstance(value, list) and all(isinstance(item, dict) for item in value):
+                return value
+
+        return None
+
+    @staticmethod
+    def _extract_markdown_table_tasks(text: str) -> List[dict[str, Any]]:
+        """Parse planner fallback output such as a Markdown task overview table."""
+        tasks: List[dict[str, Any]] = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("|") or "---" in stripped:
+                continue
+
+            cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+            if len(cells) < 3:
+                continue
+            if not re.fullmatch(r"\d+", cells[0]):
+                continue
+
+            title = re.sub(r"[*_`]", "", cells[1]).strip()
+            intent = re.sub(r"[*_`]", "", cells[2]).strip()
+            if not title:
+                continue
+
+            query_parts = [title, intent, "datasheet reference design price lifecycle"]
+            tasks.append(
+                {
+                    "title": title,
+                    "intent": intent or title,
+                    "query": " ".join(part for part in query_parts if part),
+                }
+            )
 
         return tasks
 

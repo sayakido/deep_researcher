@@ -79,7 +79,7 @@ class DeepResearchAgent:
         self.tools = create_note_tools(self.note_store) if self.note_store else []
         self.tool_runner = ToolRunner(self.llm, self.tools) if self.tools else ToolRunner(self.llm, [])
 
-        self.planner = PlanningService(self.tool_runner, self.config)
+        self.planner = PlanningService(ToolRunner(self.llm, []), self.config)
         self.summarizer = SummarizationService(self.tool_runner, self.config)
         self.reporting = ReportingService(self.tool_runner, self.config)
 
