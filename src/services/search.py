@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from config import Configuration, SearchAPI
+from services.logging_utils import truncate
 from utils import (
     deduplicate_and_format_sources,
     format_sources,
@@ -66,11 +67,15 @@ def _fetch_full_page_contents(
     results: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     enriched = []
+    fetched = 0
     for r in results:
         url = r.get("url", "")
         raw = _fetch_page_text(url) if url else None
+        if raw:
+            fetched += 1
         r["raw_content"] = raw or r.get("content", "")
         enriched.append(r)
+    logger.info("Full page fetch completed total=%s fetched=%s", len(results), fetched)
     return enriched
 
 
@@ -84,6 +89,12 @@ def dispatch_search(
     search_api = SearchAPI(search_api_str)
     notices: list[str] = []
     answer_text: str | None = None
+    logger.info(
+        "Search dispatch start backend=%s query=%s fetch_full_page=%s",
+        search_api_str,
+        truncate(query),
+        config.fetch_full_page,
+    )
 
     try:
         if search_api == SearchAPI.DUCKDUCKGO:
@@ -153,7 +164,7 @@ def dispatch_search(
     }
 
     logger.info(
-        "Search backend=%s answer=%s results=%s",
+        "Search dispatch done backend=%s answer=%s results=%s",
         backend_label,
         bool(answer_text),
         len(results),

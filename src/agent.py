@@ -13,6 +13,7 @@ from langgraph.types import Send, StreamWriter
 from config import Configuration
 from models import LangGraphState, SummaryState, SummaryStateOutput, TodoItem
 from services.notes import NoteStore, create_note_tools
+from services.logging_utils import truncate
 from services.planner import PlanningService
 from services.reporter import ReportingService
 from services.search import dispatch_search, prepare_research_context
@@ -106,10 +107,17 @@ class DeepResearchAgent:
         return builder.compile()
 
     def _plan_tasks_node(self, state: LangGraphState, writer: StreamWriter = lambda _: None) -> dict:
+        logger.info("plan_tasks start topic=%s", truncate(state["research_topic"]))
         todo_items = self.planner.plan_todo_list(state["research_topic"])
         if not todo_items:
+            logger.warning("planner returned no tasks; using fallback task")
             todo_items = [self.planner.create_fallback_task(state["research_topic"])]
 
+        logger.info(
+            "plan_tasks done task_count=%s titles=%s",
+            len(todo_items),
+            [task.title for task in todo_items],
+        )
         writer({
             "type": "todo_list",
             "tasks": [self._serialize_task(t) for t in todo_items],
@@ -139,10 +147,17 @@ class DeepResearchAgent:
         """Execute research for a single task, emitting SSE events via StreamWriter."""
         task = state["todo_items"][0] if state["todo_items"] else None
         if not task or task.status in ("completed", "skipped"):
+            logger.debug("execute_one skipped empty_or_done=%s", bool(task))
             return {}
 
         summary_state = _graph_state_to_summary(state)
         task.status = "in_progress"
+        logger.info(
+            "execute_one start task_id=%s title=%s query=%s",
+            task.id,
+            task.title,
+            truncate(task.query),
+        )
 
         writer({
             "type": "task_status",
@@ -167,6 +182,12 @@ class DeepResearchAgent:
         if not search_result or not search_result.get("results"):
             task.status = "skipped"
             task.notices = notices
+            logger.warning(
+                "execute_one no search results task_id=%s backend=%s notices=%s",
+                task.id,
+                backend,
+                notices,
+            )
             writer({
                 "type": "task_status",
                 "task_id": task.id,
@@ -190,6 +211,13 @@ class DeepResearchAgent:
         summary_state.web_research_results.append(context)
         summary_state.sources_gathered.append(sources_summary)
         summary_state.research_loop_count += 1
+        logger.info(
+            "execute_one search done task_id=%s backend=%s results=%s context_chars=%s",
+            task.id,
+            backend,
+            len((search_result or {}).get("results", [])),
+            len(context),
+        )
 
         writer({
             "type": "sources",
@@ -220,6 +248,11 @@ class DeepResearchAgent:
 
         task.summary = summary_text.strip() if summary_text else "暂无可用信息"
         task.status = "completed"
+        logger.info(
+            "execute_one completed task_id=%s summary_chars=%s",
+            task.id,
+            len(task.summary or ""),
+        )
 
         writer({
             "type": "task_status",
@@ -241,9 +274,22 @@ class DeepResearchAgent:
     def _generate_report_node(self, state: LangGraphState, writer: StreamWriter = lambda _: None) -> dict:
         summary_state = _graph_state_to_summary(state)
         summary_state.todo_items = state["todo_items"]
+        completed = [task for task in summary_state.todo_items if task.status == "completed"]
+        skipped = [task for task in summary_state.todo_items if task.status == "skipped"]
+        logger.info(
+            "generate_report start tasks=%s completed=%s skipped=%s",
+            len(summary_state.todo_items),
+            len(completed),
+            len(skipped),
+        )
 
         report = self.reporting.generate_report(summary_state)
         self._persist_final_report(summary_state, report)
+        logger.info(
+            "generate_report done report_chars=%s note_id=%s",
+            len(report or ""),
+            summary_state.report_note_id,
+        )
 
         writer({
             "type": "final_report",
@@ -295,7 +341,7 @@ class DeepResearchAgent:
         emitted by the graph nodes via StreamWriter.  Tasks run in
         parallel through the Send API with zero duplicated logic.
         """
-        logger.debug("Starting streaming research: topic=%s", topic)
+        logger.info("run_stream start topic=%s", truncate(topic))
         yield {"type": "status", "message": "初始化硬件方案设计流程"}
 
         initial_state: LangGraphState = {
@@ -315,12 +361,14 @@ class DeepResearchAgent:
                 continue
 
             if event.get("type") and event.get("type") != "custom":
+                logger.debug("run_stream yield type=%s task_id=%s", event.get("type"), event.get("task_id"))
                 yield event
                 continue
 
             if event.get("type") == "custom":
                 data = event.get("data")
                 if isinstance(data, dict) and data.get("type"):
+                    logger.debug("run_stream yield type=%s task_id=%s", data.get("type"), data.get("task_id"))
                     yield data
 
     # ------------------------------------------------------------------

@@ -16,6 +16,7 @@ from prompts import (
     todo_planner_system_prompt,
 )
 from services.tool_runner import ToolRunner
+from services.logging_utils import log_duration, truncate
 from utils import strip_thinking_tokens
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,9 @@ class PlanningService:
             HumanMessage(content=prompt),
         ]
 
-        content = self._tool_runner.run(messages)
+        logger.info("Planner request topic=%s", truncate(topic))
+        with log_duration(logger, "planner_llm"):
+            content = self._tool_runner.run(messages)
 
         logger.info("Planner raw output (truncated): %s", content[:500])
 
@@ -60,6 +63,8 @@ class PlanningService:
 
         titles = [task.title for task in todo_items]
         logger.info("Planner produced %d tasks: %s", len(todo_items), titles)
+        if not todo_items:
+            logger.warning("Planner produced no valid tasks")
         return todo_items
 
     @staticmethod
@@ -109,8 +114,8 @@ class PlanningService:
             candidate = text[start : end + 1]
             try:
                 return json.loads(candidate)
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as exc:
+                logger.debug("Planner JSON object parse failed: %s", exc)
 
         start = text.find("[")
         end = text.rfind("]")
@@ -118,7 +123,9 @@ class PlanningService:
             candidate = text[start : end + 1]
             try:
                 return json.loads(candidate)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as exc:
+                logger.debug("Planner JSON array parse failed: %s", exc)
                 return None
 
+        logger.debug("Planner response did not contain JSON payload")
         return None

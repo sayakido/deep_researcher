@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterator
 from typing import Tuple
 
@@ -11,7 +12,10 @@ from config import Configuration
 from models import SummaryState, TodoItem
 from prompts import task_summarizer_instructions
 from services.tool_runner import ToolRunner
+from services.logging_utils import log_duration
 from utils import strip_thinking_tokens
+
+logger = logging.getLogger(__name__)
 
 
 class SummarizationService:
@@ -30,7 +34,8 @@ class SummarizationService:
             HumanMessage(content=prompt),
         ]
 
-        content = self._tool_runner.run(messages)
+        with log_duration(logger, "summarize_task_llm", task_id=task.id):
+            content = self._tool_runner.run(messages)
 
         summary_text = content.strip()
         if self._config.strip_thinking_tokens:
@@ -52,6 +57,12 @@ class SummarizationService:
             SystemMessage(content=task_summarizer_instructions),
             HumanMessage(content=prompt),
         ]
+        logger.info(
+            "summarizer stream prepared task_id=%s context_chars=%s remove_thinking=%s",
+            task.id,
+            len(context),
+            remove_thinking,
+        )
 
         def flush_visible() -> Iterator[str]:
             nonlocal emit_index, raw_buffer
@@ -96,6 +107,12 @@ class SummarizationService:
                         visible_output += segment
                         if segment:
                             yield segment
+                logger.info(
+                    "summarizer stream finished task_id=%s raw_chars=%s visible_chars=%s",
+                    task.id,
+                    len(raw_buffer),
+                    len(visible_output),
+                )
 
         def get_summary() -> str:
             if remove_thinking:

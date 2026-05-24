@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import logging
+
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from config import Configuration
 from models import SummaryState
 from prompts import report_writer_instructions
 from services.tool_runner import ToolRunner
+from services.logging_utils import log_duration
 from utils import strip_thinking_tokens
+
+logger = logging.getLogger(__name__)
 
 
 class ReportingService:
@@ -56,10 +61,17 @@ class ReportingService:
             HumanMessage(content=prompt),
         ]
 
-        content = self._tool_runner.run(messages)
+        logger.info(
+            "reporter request tasks=%s completed=%s",
+            len(state.todo_items),
+            len([task for task in state.todo_items if task.status == "completed"]),
+        )
+        with log_duration(logger, "reporter_llm"):
+            content = self._tool_runner.run(messages)
 
         report_text = content.strip()
         if self._config.strip_thinking_tokens:
             report_text = strip_thinking_tokens(report_text)
 
+        logger.info("reporter done report_chars=%s", len(report_text))
         return report_text or "硬件方案设计报告生成失败，请检查输入。"
