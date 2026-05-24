@@ -311,7 +311,14 @@ class DeepResearchAgent:
         }
 
         for event in self.graph.stream(initial_state, stream_mode="custom"):
-            if isinstance(event, dict) and event.get("type") == "custom":
+            if not isinstance(event, dict):
+                continue
+
+            if event.get("type") and event.get("type") != "custom":
+                yield event
+                continue
+
+            if event.get("type") == "custom":
                 data = event.get("data")
                 if isinstance(data, dict) and data.get("type"):
                     yield data

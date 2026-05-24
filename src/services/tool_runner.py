@@ -24,12 +24,13 @@ class ToolRunner:
             if not tool_calls:
                 return response.content if hasattr(response, "content") else str(response)
 
+            messages.append(response)
             for tc in tool_calls:
                 tool_fn = self._tool_map.get(tc["name"])
-                if not tool_fn:
-                    continue
-                result = tool_fn.invoke(tc["args"])
-                messages.append(response)
+                if tool_fn:
+                    result = tool_fn.invoke(tc["args"])
+                else:
+                    result = f"Unknown tool: {tc['name']}"
                 messages.append(ToolMessage(content=str(result), tool_call_id=tc["id"]))
 
         response = self._llm.invoke(messages)
@@ -48,12 +49,13 @@ class ToolRunner:
                         yield content
                 return
 
+            messages.append(response)
             for tc in tool_calls:
                 tool_fn = self._tool_map.get(tc["name"])
-                if not tool_fn:
-                    continue
-                result = tool_fn.invoke(tc["args"])
-                messages.append(response)
+                if tool_fn:
+                    result = tool_fn.invoke(tc["args"])
+                else:
+                    result = f"Unknown tool: {tc['name']}"
                 messages.append(ToolMessage(content=str(result), tool_call_id=tc["id"]))
 
         for chunk in self._llm.stream(messages):

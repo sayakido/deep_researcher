@@ -122,7 +122,6 @@ def create_app() -> FastAPI:
         try:
             cfg = Configuration.from_env()
             llm = _create_llm(cfg)
-            llm.timeout = 5
             llm.invoke([HumanMessage(content="ping")])
             llm_ok = True
         except Exception:

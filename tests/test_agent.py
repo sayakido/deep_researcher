@@ -154,3 +154,27 @@ class TestPlanTasksNode:
         assert result["todo_items"][0].id == 1
         assert result["todo_items"][0].title == "需求与架构初设"
         assert "hardware architecture" in result["todo_items"][0].query
+
+
+class TestRunStream:
+    def test_yields_direct_custom_events(self, agent: DeepResearchAgent):
+        agent.graph.stream = MagicMock(return_value=iter([
+            {"type": "todo_list", "tasks": []},
+            {"type": "done"},
+        ]))
+
+        events = list(agent.run_stream("test"))
+
+        assert events[0]["type"] == "status"
+        assert events[1] == {"type": "todo_list", "tasks": []}
+        assert events[2] == {"type": "done"}
+
+    def test_yields_wrapped_custom_events(self, agent: DeepResearchAgent):
+        agent.graph.stream = MagicMock(return_value=iter([
+            {"type": "custom", "data": {"type": "done"}},
+        ]))
+
+        events = list(agent.run_stream("test"))
+
+        assert events[0]["type"] == "status"
+        assert events[1] == {"type": "done"}
